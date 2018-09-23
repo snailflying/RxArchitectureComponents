@@ -25,7 +25,7 @@ import com.library.aaron.core.vo.Status.SUCCESS
  *
  * @param <T>
 </T> */
-class Resource<T>(val status: Status, val data: T?, val message: String?) {
+class Resource<T>(var status: Status, var data: T?, var message: String?) {
 
     companion object {
         fun <T> success(data: T?): Resource<T> = Resource(Status.SUCCESS, data, null)
@@ -57,4 +57,9 @@ class Resource<T>(val status: Status, val data: T?, val message: String?) {
         return true
     }
 
+
+    var cancelListener: (() -> Unit?)? = null
+    fun setOnCancelListener(cancelListener: () -> Unit) {
+        this.cancelListener = cancelListener
+    }
 }

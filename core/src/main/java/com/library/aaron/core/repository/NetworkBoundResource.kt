@@ -2,6 +2,7 @@ package com.library.aaron.core.repository
 
 import android.arch.lifecycle.LiveData
 import android.arch.lifecycle.MediatorLiveData
+import android.arch.lifecycle.MutableLiveData
 import android.support.annotation.MainThread
 import android.support.annotation.WorkerThread
 import com.library.aaron.core.api.ApiEmptyResponse
@@ -19,20 +20,30 @@ import io.reactivex.schedulers.Schedulers
  */
 abstract class NetworkBoundResource<ResultType, RequestType> @MainThread constructor() {
 
+    private lateinit var apiResponse: LiveData<ApiResponse<RequestType>>
+    protected val liveData: MutableLiveData<RequestType> = MutableLiveData()
+
     private val result = MediatorLiveData<Resource<ResultType>>()
 
     fun asLiveData(): LiveData<Resource<ResultType>> = result
 
     init {
         result.value = Resource.loading(null)
+        result.value?.setOnCancelListener { cancelAll() }
+
         @Suppress("LeakingThis")
         val dbSource = loadFromDb()
-        result.addSource(dbSource) { resultType ->
-            result.removeSource(dbSource)
-            if (shouldFetch(resultType)) {
-                fetchFromNetwork(dbSource)
-            } else {
-                result.addSource(dbSource) { rT -> result.value = Resource.success(rT) }
+        //如果不用DB，则每次都fetchFromNetwork，此时dbSource没有监听者
+        if (!hasActiveObserversForNetWorkOnly(dbSource)) {
+            fetchFromNetwork(dbSource)
+        } else {
+            result.addSource(dbSource) { resultType ->
+                result.removeSource(dbSource)
+                if (shouldFetch(resultType)) {
+                    fetchFromNetwork(dbSource)
+                } else {
+                    result.addSource(dbSource) { rT -> result.value = Resource.success(rT) }
+                }
             }
         }
     }
@@ -45,7 +56,7 @@ abstract class NetworkBoundResource<ResultType, RequestType> @MainThread constru
     }
 
     private fun fetchFromNetwork(dbSource: LiveData<ResultType>) {
-        val apiResponse = createCall()
+        apiResponse = createCall()
         // we re-attach dbSource as a new source, it will dispatch its latest value quickly
         result.addSource(dbSource) { newData ->
             setValue(Resource.loading(newData))
@@ -73,7 +84,11 @@ abstract class NetworkBoundResource<ResultType, RequestType> @MainThread constru
                 }
                 is ApiErrorResponse -> {
                     onFetchFailed()
-                    result.addSource(dbSource) { resultType -> result.value = response.errorMessage.let { Resource.error(resultType, it) } }
+                    if (hasActiveObserversForNetWorkOnly(dbSource)) {
+                        result.addSource(dbSource) { resultType -> result.value = response.errorMessage.let { Resource.error(resultType, it) } }
+                    } else {
+                        result.value = response.errorMessage.let { Resource.error(null, it) }
+                    }
                 }
 
             }
@@ -104,4 +119,12 @@ abstract class NetworkBoundResource<ResultType, RequestType> @MainThread constru
     protected open fun onFetchFailed() {
     }
 
+    @MainThread
+    fun cancelAll() {
+        result.removeSource(apiResponse)
+    }
+
+    private fun hasActiveObserversForNetWorkOnly(dbSource: LiveData<ResultType>): Boolean {
+        return dbSource.hasActiveObservers()
+    }
 }
